@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+cpprcon.vcxproj.user
+*.vcxproj
+*.filters
+*.sln
+
+./x64
