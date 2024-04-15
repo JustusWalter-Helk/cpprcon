@@ -17,6 +17,9 @@
 #define MAX_S_C_PACKET_LENGTH 4110
 #define MAX_C_S_PACKET_LENGTH 1460
 
+#define RCON_LOG(str) do {std::cout << "\033[34m[cpprcon] \033[39m"<< str << std::endl;} while(0);
+#define RCON_ERROR(str) do {std::cout << "\033[31m[cpprcon] \033[39m"<< str << std::endl;} while(0);
+
 #include <iostream>
 #include <cstring>
 
@@ -55,6 +58,8 @@ private:
 	int sock;
 	struct sockaddr_in server;
 
+	std::vector<std::thread*> threads = std::vector<std::thread*>();
+
 	void sendPacket(Packet& packet) {
 		int totalLength = sizeof(packet.length) + sizeof(packet.id) + sizeof(packet.type) + strlen(packet.payload) + 1 + sizeof(packet.pad);
 
@@ -69,13 +74,29 @@ private:
 		memcpy(buffer + pos, packet.payload, strlen(packet.payload) + 1);
 		pos += strlen(packet.payload) + 1;
 		memcpy(buffer + pos, &packet.pad, sizeof(packet.pad));
+		
+		//No bytes to read on socket yet so we skip checking server availability when sending login packets
+		if (packet.type == PACKET_TYPE_LOGIN) {
+			SSIZE_T bytesSent = send(sock, reinterpret_cast<const char*>(buffer), totalLength, 0);
+			if (bytesSent == -1) {
+				RCON_ERROR("Error sending packet to server!");
+				close();
+			}
+			else {
+				RCON_LOG("Sent " << bytesSent << " bytes to server");
+			}
+
+			delete[] buffer;
+			return;
+		}
 
 		SSIZE_T bytesSent = send(sock, reinterpret_cast<const char*>(buffer), totalLength, 0);
 		if (bytesSent == -1) {
-			std::cerr << "Error sending packet to server" << std::endl;
+			RCON_ERROR("Error sending packet to server!");
+			close();
 		}
 		else {
-			std::cout << "Sent " << bytesSent << " bytes to server" << std::endl;
+			RCON_LOG("Sent " << bytesSent << " bytes to server");
 		}
 
 		delete[] buffer;
@@ -86,12 +107,17 @@ private:
 
 		Packet response;
 
+		RCON_LOG("Waiting for response");
+
 		while (!responseReceived) {
 			if (receivePacket_sync(response) && response.id == id) {
 				responseReceived = true;
 				break;
 			}
+			
 		}
+
+		RCON_LOG("Response received, executing callback...");
 
 		callback(response);
 	}
@@ -102,8 +128,8 @@ private:
 
 		SSIZE_T bytesReceived = recv(sock, lengthBuffer, sizeof(packet.length), 0);
 		if (bytesReceived <= 0) {
-			std::cout << "Error receiving packet length" << std::endl;
-			delete lengthBuffer;
+			RCON_ERROR("Error receiving package length!");
+			close();
 			return false;
 		}
 
@@ -113,17 +139,14 @@ private:
 		packet.length = packetLength;
 
 		if (packet.length >= MAX_S_C_PACKET_LENGTH - sizeof(int32_t)) {
-			std::cout << "Package could be multi packet response!";
+			RCON_LOG("Package could be multi packet response!");
 		}
-
-		std::cout << "After calc package length is: " << packet.length << std::endl;
-		std::cout << "Before calc package length is: " << lengthBuffer << std::endl;
 
 		SSIZE_T remainingBytes = packet.length;
 		char* buffer = new char[remainingBytes];
 		bytesReceived = recv(sock, buffer, remainingBytes, 0);
 		if (bytesReceived <= 0) {
-			std::cout << "Error receiving payload or no payload attached" << std::endl;
+			RCON_ERROR("Error receiving payload or no payload attached");
 			delete[] buffer;
 			return false;
 		}
@@ -140,10 +163,6 @@ private:
 
 		int32_t payloadSize = remainingBytes - pos;
 
-		std::cout << "Remaining Bytes: " << remainingBytes << std::endl;
-		std::cout << "Pos: " << pos << std::endl;
-		std::cout << "Payload size: " << payloadSize << std::endl;
-
 		if (payloadSize > 0) {
 			packet.payload = new char[payloadSize];
 
@@ -154,6 +173,8 @@ private:
 		}
 
 		delete[] buffer;
+
+		return true;
 	}
 
 public:
@@ -161,7 +182,7 @@ public:
 #ifdef _WIN32
 		WSADATA wsaData;
 		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-			std::cout << "Windows error lol" << std::endl;
+			RCON_ERROR("Windows error lol");
 			return;
 		}
 #endif
@@ -186,10 +207,10 @@ public:
 	*/
 	bool connect() {
 		if (::connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
-			std::cerr << "Connection failed" << std::endl;
+			RCON_ERROR("Host could not be resolved!");
 			return false;
 		}
-		std::cout << "Connected to server" << std::endl;
+		RCON_LOG("Connected to Server");
 		return true;
 	}
 
@@ -201,23 +222,42 @@ public:
 	void login(char* password) {
 		Packet packet(12, PACKET_TYPE_LOGIN, password);
 
-		std::cout << "Login packet contains " << packet.length << " bytes" << std::endl;
+		RCON_LOG("Attempting login...");
 
 		sendPacket(packet);
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		Packet p;
+
+		receivePacket_sync(p);
+
+		if (p.id == 12) {
+			RCON_LOG("Login successful!");
+		}
+		else {
+			RCON_ERROR("Wrong password!");
+		}
 	}
 
 	//Wait a sec? New thread each time a command is sent?
 	void sendCommand(const char* cmd, uint32_t id,const std::function<void(Packet)>& callback) {
 		Packet packet(id, PACKET_TYPE_COMMAND, cmd);
 
-		sendPacket(packet);
-
 		std::thread responseThread(&RconClient::waitForResponse, this, id, callback);
+		threads.push_back(&responseThread);
 		responseThread.detach();
+
+		sendPacket(packet);
 	}
+
 
 	//TODO: Handle response thread and perform general cleanup of data
 	void close() {
+		for (std::thread* t : threads) {
+			t->join();
+		}
+
 		// Close the socket
 		::closesocket(sock);
 

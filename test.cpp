@@ -5,10 +5,7 @@
 
 int main() {
 	RconClient client("127.0.0.1", 25575);
-	if (client.connect()) {
-		std::cout << "connected!" << std::endl;
-	}
-	else {
+	if (!client.connect()) {
 		return 0;
 	}
 
@@ -26,7 +23,7 @@ int main() {
 
 	while (true) {
 		std::string cmd;
-		std::cin >> cmd;
+		std::getline(std::cin, cmd);
 
 		client.sendCommand(cmd.c_str(), 2, [](Packet p) {
 			std::cout << p.payload << std::endl;
