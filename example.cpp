@@ -1,3 +1,5 @@
+#define E_DEBUG
+
 #include "client.h"
 
 #include <sstream>
@@ -13,11 +15,7 @@ int main() {
 
 	client.login(password);
 
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-	char cmd[] = "list";
-
-	client.sendCommand(cmd, 1, [](Packet p) {
+	client.sendCommand("test command", 1, [](Packet p) {
 		std::cout << p.payload << std::endl;
 		});
 
@@ -30,7 +28,5 @@ int main() {
 			});
 	}
 
-	client.close();
-	
 	return 0;
 }

@@ -17,7 +17,12 @@
 #define MAX_S_C_PACKET_LENGTH 4110
 #define MAX_C_S_PACKET_LENGTH 1460
 
-#define RCON_LOG(str) do {std::cout << "\033[34m[cpprcon] \033[39m"<< str << std::endl;} while(0);
+#ifdef E_DEBUG
+	#define RCON_LOG(str) do {std::cout << "\033[34m[cpprcon] \033[39m"<< str << std::endl;} while(0);
+#else
+	#define RCON_LOG(str) do {} while(0);
+#endif
+
 #define RCON_ERROR(str) do {std::cout << "\033[31m[cpprcon] \033[39m"<< str << std::endl;} while(0);
 
 #include <iostream>
@@ -53,6 +58,11 @@ struct Packet {
 	}
 };
 
+
+/**
+	 Basic class to manage the client->server connection and send/receive basic commands
+	 Enable logs by defining E_DEBUG before including the header file
+	**/
 class RconClient {
 private:
 	int sock;
@@ -177,8 +187,7 @@ private:
 		return true;
 	}
 
-public:
-	RconClient(const char* addr, int port) {
+	void setup(const char* addr, int port) {
 #ifdef _WIN32
 		WSADATA wsaData;
 		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -194,10 +203,15 @@ public:
 
 		server.sin_family = AF_INET;
 		server.sin_port = htons(port);
-		
+
 		if (inet_pton(AF_INET, addr, &server.sin_addr) <= 0) {
 			return;
 		}
+	}
+
+public:
+	RconClient(const char* addr, int port) {
+		setup(addr, port);
 	}
 
 	/**
@@ -241,6 +255,13 @@ public:
 	}
 
 	//Wait a sec? New thread each time a command is sent?
+	/**
+	* Sends a command type package to the server with the command as payload
+	* 
+	* @param cmd command to send as payload
+	* @param id some kind of unique identifier for that excact command, should`t not change when sending the same command again
+	* @param callback function to call after receiving a response from the server
+	**/
 	void sendCommand(const char* cmd, uint32_t id,const std::function<void(Packet)>& callback) {
 		Packet packet(id, PACKET_TYPE_COMMAND, cmd);
 
